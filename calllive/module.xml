@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<module>
+    <rawname>calllive</rawname>
+    <name>Монитор телефонии</name>
+    <version>15.0.6</version>
+    <publisher>CallLive</publisher>
+    <license>GPLv3+</license>
+    <licenselink>https://www.gnu.org/licenses/gpl-3.0.html</licenselink>
+    <category>Reports</category>
+    <description>Текущие соединения, транки, внутренние номера и качество аудиоканалов Asterisk.</description>
+    <menuitems>
+        <calllive>Монитор телефонии</calllive>
+    </menuitems>
+    <depends>
+        <version>15.0</version>
+        <module>core ge 15.0</module>
+    </depends>
+    <supported>
+        <version>15.0</version>
+    </supported>
+</module>
