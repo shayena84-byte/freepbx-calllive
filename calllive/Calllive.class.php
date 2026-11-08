@@ -4,18 +4,25 @@ namespace FreePBX\modules;
 
 class Calllive implements \BMO
 {
+    const VERSION = '15.0.8';
+    const STORAGE = '/var/lib/freepbx-calllive';
     const SNAPSHOT = '/run/freepbx-calllive/snapshot.json';
     const MAX_BYTES = 4194304;
     const MAX_AGE = 18;
 
     private $freepbx;
+    private $historyBusy = false;
 
     public function __construct($freepbx)
     {
         $this->freepbx = $freepbx;
     }
 
-    public function install() {}
+    public function install()
+    {
+        $this->freepbx->Database->exec('CREATE TABLE IF NOT EXISTS calllive_settings (
+            id TINYINT NOT NULL PRIMARY KEY, value TEXT NOT NULL) ENGINE=InnoDB');
+    }
     public function uninstall() {}
     public function backup() {}
     public function restore($backup) {}
@@ -42,8 +49,14 @@ class Calllive implements \BMO
 
     public function ajaxRequest($request, &$settings)
     {
-        return in_array($request, array('snapshot', 'extension', 'trunk'), true) && isset($_SERVER['REQUEST_METHOD'])
-            && $_SERVER['REQUEST_METHOD'] === 'GET' && $this->canView();
+        if (!$this->canView() || !isset($_SERVER['REQUEST_METHOD'])) return false;
+        if ($request === 'settings') {
+            return $_SERVER['REQUEST_METHOD'] === 'POST' && $this->canManage()
+                && isset($_POST['csrf'], $_SESSION['calllive_csrf']) && is_string($_POST['csrf'])
+                && hash_equals($_SESSION['calllive_csrf'], $_POST['csrf']);
+        }
+        return $_SERVER['REQUEST_METHOD'] === 'GET'
+            && in_array($request, array('snapshot', 'extension', 'trunk', 'history', 'call', 'statistics', 'diagnostics'), true);
     }
 
     public function ajaxHandler()
@@ -54,6 +67,11 @@ class Calllive implements \BMO
         }
 
         $command = isset($_GET['command']) ? $_GET['command'] : '';
+        if ($command === 'settings') return $this->saveSettings();
+        if ($command === 'history') return $this->history();
+        if ($command === 'call') return $this->callDetail();
+        if ($command === 'statistics') return $this->statistics();
+        if ($command === 'diagnostics') return $this->diagnostics();
         if ($command === 'extension' || $command === 'trunk') {
             $id = isset($_GET['id']) && is_string($_GET['id']) ? $_GET['id'] : '';
             $format = $command === 'extension' ? '/\A[A-Za-z0-9*#_.+\-]{1,20}\z/' : '/\A[0-9]{1,10}\z/';
@@ -70,6 +88,8 @@ class Calllive implements \BMO
         }
 
         $snapshot = $this->readSnapshot();
+        $snapshot['thresholds'] = $this->thresholds();
+        $snapshot['module_version'] = self::VERSION;
         if (isset($_GET['inventory']) && $_GET['inventory'] === '1') {
             try {
                 $database = $this->freepbx->Database;
@@ -89,6 +109,196 @@ class Calllive implements \BMO
             }
         }
         return $snapshot;
+    }
+
+    public function canManage()
+    {
+        return $this->canView() && $_SESSION['AMP_user']->checkSection('*');
+    }
+
+    public function csrfToken()
+    {
+        if (!$this->canManage()) return '';
+        if (session_status() !== PHP_SESSION_ACTIVE) session_start();
+        if (empty($_SESSION['calllive_csrf'])) {
+            $strong = false;
+            $bytes = function_exists('random_bytes') ? random_bytes(24) : openssl_random_pseudo_bytes(24, $strong);
+            if (!is_string($bytes) || strlen($bytes) !== 24 || (!function_exists('random_bytes') && !$strong)) return '';
+            $_SESSION['calllive_csrf'] = bin2hex($bytes);
+        }
+        return $_SESSION['calllive_csrf'];
+    }
+
+    private function thresholds()
+    {
+        $defaults = array('quality' => 65, 'loss' => 2, 'wait' => 30, 'sustain' => 10);
+        try {
+            $text = $this->freepbx->Database->query('SELECT value FROM calllive_settings WHERE id = 1')->fetchColumn();
+            $saved = json_decode($text, true);
+            if (is_array($saved)) foreach ($defaults as $key => $value) {
+                if (isset($saved[$key]) && is_numeric($saved[$key])) $defaults[$key] = (float) $saved[$key];
+            }
+        } catch (\Exception $error) {}
+        return $defaults;
+    }
+
+    private function saveSettings()
+    {
+        if (!$this->canManage() || !isset($_POST['csrf'], $_SESSION['calllive_csrf'])
+            || !is_string($_POST['csrf']) || !hash_equals($_SESSION['calllive_csrf'], $_POST['csrf'])) {
+            $this->freepbx->Ajax->ajaxError(403, 'CallLive settings denied');
+        }
+        $values = array();
+        foreach (array('quality' => array(0, 100), 'loss' => array(.1, 100),
+            'wait' => array(5, 3600), 'sustain' => array(0, 300)) as $key => $range) {
+            $value = isset($_POST[$key]) && is_string($_POST[$key]) ? $_POST[$key] : '';
+            if (!preg_match('/\A[0-9]{1,4}(?:\.[0-9]{1,2})?\z/', $value)
+                || (float) $value < $range[0] || (float) $value > $range[1]) return array('state' => 'invalid');
+            $values[$key] = (float) $value;
+        }
+        $query = $this->freepbx->Database->prepare('INSERT INTO calllive_settings (id, value) VALUES (1, ?)
+            ON DUPLICATE KEY UPDATE value = VALUES(value)');
+        $query->execute(array(json_encode($values)));
+        return array('state' => 'ready', 'thresholds' => $values);
+    }
+
+    private function readJson($path, $limit = self::MAX_BYTES)
+    {
+        $text = is_readable($path) ? @file_get_contents($path, false, null, 0, $limit + 1) : false;
+        $data = is_string($text) && strlen($text) <= $limit ? json_decode($text, true) : null;
+        return is_array($data) && isset($data['schema']) && $data['schema'] === 1 ? $data : null;
+    }
+
+    private function validDate($value)
+    {
+        return is_string($value) && preg_match('/\A([0-9]{4})-([0-9]{2})-([0-9]{2})\z/', $value, $m)
+            && checkdate((int) $m[2], (int) $m[3], (int) $m[1]);
+    }
+
+    private function dateRange()
+    {
+        $from = isset($_GET['from']) ? $_GET['from'] : date('Y-m-d');
+        $to = isset($_GET['to']) ? $_GET['to'] : date('Y-m-d');
+        if (!$this->validDate($from) || !$this->validDate($to) || $from > $to
+            || (new \DateTime($from))->diff(new \DateTime($to))->days > 30) return null;
+        $days = array();
+        $day = new \DateTime($to);
+        while ($day->format('Y-m-d') >= $from && count($days) < 31) {
+            $days[] = $day->format('Y-m-d');
+            $day->modify('-1 day');
+        }
+        return $days;
+    }
+
+    private function callDetail()
+    {
+        $id = isset($_GET['id']) && is_string($_GET['id']) ? $_GET['id'] : '';
+        if (!preg_match('/\A([0-9]{4})([0-9]{2})([0-9]{2})-[0-9a-f]{24}\z/', $id, $m)
+            || !checkdate((int) $m[2], (int) $m[3], (int) $m[1])) return array('state' => 'missing');
+        $day = $m[1] . '-' . $m[2] . '-' . $m[3];
+        $record = $this->readJson(self::STORAGE . '/archive/' . $day . '/' . $id . '.json', 2097152);
+        if (!$record) $record = $this->readJson(self::STORAGE . '/live/' . $id . '.json', 2097152);
+        if (!$record || !isset($record['id']) || $record['id'] !== $id) return array('state' => 'missing');
+        $record['stale'] = $record['status'] === 'active' && time() - $record['last_seen'] > self::MAX_AGE;
+        return array('state' => 'ready', 'record' => $record);
+    }
+
+    private function reverseLines($path, $position)
+    {
+        $file = @fopen($path, 'rb');
+        if (!$file) return;
+        if (!flock($file, LOCK_SH | LOCK_NB)) { $this->historyBusy = true; fclose($file); return; }
+        $size = fstat($file)['size'];
+        $pos = min($size, $position === null ? $size : $position);
+        $tail = '';
+        while ($pos > 0) {
+            $bytes = min(8192, $pos);
+            $pos -= $bytes;
+            fseek($file, $pos);
+            $tail = fread($file, $bytes) . $tail;
+            while (($index = strrpos($tail, "\n")) !== false) {
+                $line = substr($tail, $index + 1);
+                $tail = substr($tail, 0, $index);
+                if ($line !== '' && strlen($line) <= 16384) yield array($line, $pos + $index + 1);
+            }
+            if (strlen($tail) > 16384) break;
+        }
+        if ($tail !== '' && strlen($tail) <= 16384) yield array($tail, 0);
+        flock($file, LOCK_UN);
+        fclose($file);
+    }
+
+    private function history()
+    {
+        $days = $this->dateRange();
+        $search = isset($_GET['search']) && is_string($_GET['search']) ? trim($_GET['search']) : '';
+        if (!$days || strlen($search) > 100) return array('state' => 'invalid');
+        $cursor = null;
+        if (!empty($_GET['cursor'])) {
+            if (!is_string($_GET['cursor']) || strlen($_GET['cursor']) > 150) return array('state' => 'invalid');
+            $cursor = json_decode(base64_decode($_GET['cursor'], true), true);
+            if (!is_array($cursor) || !isset($cursor['day'], $cursor['pos'])
+                || !in_array($cursor['day'], $days, true) || !is_int($cursor['pos']) || $cursor['pos'] < 0) return array('state' => 'invalid');
+        }
+        $records = array(); $seen = array(); $scanned = 0; $next = null;
+        $deadline = microtime(true) + 1.5;
+        $problem = isset($_GET['problem']) && $_GET['problem'] === '1';
+        $threshold = $this->thresholds()['quality'];
+        foreach ($days as $day) {
+            if ($cursor && $day > $cursor['day']) continue;
+            $position = $cursor && $day === $cursor['day'] ? $cursor['pos'] : null;
+            foreach ($this->reverseLines(self::STORAGE . '/archive/' . $day . '/catalog.jsonl', $position) as $line) {
+                $row = json_decode($line[0], true);
+                $scanned++;
+                if (is_array($row) && isset($row['id']) && !isset($seen[$row['id']])) {
+                    $seen[$row['id']] = true;
+                    $haystack = implode(' ', array_merge(isset($row['numbers']) ? $row['numbers'] : array(),
+                        isset($row['endpoints']) ? $row['endpoints'] : array(), isset($row['participants']) ? $row['participants'] : array()));
+                    $matches = $search === '' || stripos($haystack, $search) !== false;
+                    if ($matches && (!$problem || (isset($row['worst_quality']['score']) && $row['worst_quality']['score'] < $threshold))) $records[] = $row;
+                }
+                if (count($records) >= 50 || $scanned >= 50000 || microtime(true) >= $deadline) {
+                    $next = base64_encode(json_encode(array('day' => $day, 'pos' => $line[1])));
+                    break 2;
+                }
+            }
+            if ($this->historyBusy) {
+                $next = base64_encode(json_encode(array('day' => $day, 'pos' => $position === null ? PHP_INT_MAX : $position)));
+                break;
+            }
+        }
+        return array('state' => 'ready', 'records' => $records, 'cursor' => $next,
+            'partial' => $next !== null && count($records) < 50,
+            'available' => is_readable(self::STORAGE . '/statistics.json'));
+    }
+
+    private function statistics()
+    {
+        $days = $this->dateRange();
+        if (!$days) return array('state' => 'invalid');
+        $data = $this->readJson(self::STORAGE . '/statistics.json');
+        if (!$data) return array('state' => 'unavailable');
+        $selected = array();
+        foreach (array_reverse($days) as $day) if (isset($data['days'][$day])) {
+            $selected[$day] = $data['days'][$day];
+            unset($selected[$day]['recent_ids']);
+        }
+        return array('state' => 'ready', 'updated_at' => $data['updated_at'], 'days' => $selected);
+    }
+
+    private function diagnostics()
+    {
+        $snapshot = $this->readSnapshot();
+        $version = isset($snapshot['collector_version']) ? $snapshot['collector_version'] : null;
+        return array('state' => 'ready', 'module_version' => self::VERSION, 'collector_version' => $version,
+            'compatible' => $version === self::VERSION, 'pbx_state' => $snapshot['state'],
+            'updated_at' => isset($snapshot['updated_at']) ? $snapshot['updated_at'] : null,
+            'snapshot_readable' => is_readable(self::SNAPSHOT),
+            'journal_readable' => is_readable(self::STORAGE . '/statistics.json'),
+            'journal' => isset($snapshot['journal']) ? $snapshot['journal'] : null,
+            'runtime' => isset($snapshot['diagnostics']) ? $snapshot['diagnostics'] : null,
+            'can_manage' => $this->canManage(), 'thresholds' => $this->thresholds(),
+            'update_command' => $this->canManage() ? 'bash ' . escapeshellarg(__DIR__ . '/deploy/update-root.sh') : null);
     }
 
     private function rows($sql, $id)
@@ -287,7 +497,7 @@ class Calllive implements \BMO
             return array('state' => 'collector_unavailable');
         }
         if ($snapshot['state'] !== 'ready') {
-            return array('state' => $snapshot['state'], 'daily' => isset($snapshot['daily']) ? $snapshot['daily'] : null);
+            return $snapshot;
         }
         if (!isset($snapshot['channels'], $snapshot['groups'], $snapshot['hints'])
             || !is_array($snapshot['channels']) || !is_array($snapshot['groups']) || !is_array($snapshot['hints'])) {

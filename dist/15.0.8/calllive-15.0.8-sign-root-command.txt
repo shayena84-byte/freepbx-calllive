@@ -1,0 +1,228 @@
+php -f /dev/stdin <<'CALLLIVE_SIGN_1508'
+<?php
+/**
+ * Локальная подпись CallLive 15.0.8 для FreePBX 15.
+ * Запуск на АТС от root: php /root/calllive-15.0.8-sign-local.php
+ */
+
+if (PHP_SAPI !== 'cli') {
+    http_response_code(403);
+    exit;
+}
+if (!function_exists('posix_geteuid') || posix_geteuid() !== 0) {
+    fwrite(STDERR, "Запустите скрипт в консоли АТС от root.\n");
+    exit(1);
+}
+
+// SHA-256 файлов из опубликованного архива CallLive 15.0.8.
+$expected = array(
+    'Calllive.class.php' => 'ea26d1aeb1f55b666ac1f1bb3fbd44962e4de8cf878317976bcbf31ea3a74845',
+    'LICENSE' => '3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986',
+    'README_RU.md' => 'fbe7b41897bba78b6d4599671cac104d9b2954dc234a20c8910f7aec13685837',
+    'assets/css/calllive.css' => 'f3989f84eb40ea2558544e5e2b980c8069a3871b981cba62f3c44da561a0411c',
+    'assets/js/calllive.js' => '6d3c28b99d4965b76d44c267e324b607d7ad670f19eb10010478091464fea842',
+    'deploy/collector.py' => '7a783a6d34a071bb8d07dd016916a3f79161716acf77a0b293597612d291b454',
+    'deploy/files.sha256' => '6528fc8b725cd5d31120cd23ffe2f52bc7902cbfbfd83722b36df87a7991ada7',
+    'deploy/freepbx-calllive.service' => '240a113d216d8fa079b23c77eebca8bc81264f693df4075c649caffa1e7a2f28',
+    'deploy/release.json' => '14a3d85a3d8cb1839864a6767d018a6e64c4e31136c7af2ef3f97e4e77ec179d',
+    'deploy/telemetry.py' => 'd4535e9234b7c9799a8ec61dc5f8be78d30aa7272ad4491dfef799d1de1e3a1b',
+    'deploy/update-root.sh' => '29b4eb9f50678279b36b312fca868cfd58226f406e3530083d1608401c470548',
+    'module.xml' => '01957614b9bc70c4c452f9ed6019513abf28a013412cb5d51ba975499b2f105a',
+    'page.calllive.php' => '0f71affda63aec9138f5d5ca227e4a559f13ac6c8ff77f1cf894c63f01db233d',
+);
+
+function clSignCommand(array $args, $input = '')
+{
+    $command = implode(' ', array_map('escapeshellarg', $args));
+    $fds = array(array('pipe', 'r'), array('pipe', 'w'), STDERR);
+    $process = proc_open($command, $fds, $pipes);
+    if (!is_resource($process)) {
+        throw new RuntimeException('Не удалось запустить ' . $args[0]);
+    }
+    $written = $input === '' ? 0 : fwrite($pipes[0], $input);
+    fclose($pipes[0]);
+    $output = stream_get_contents($pipes[1]);
+    fclose($pipes[1]);
+    if (proc_close($process) !== 0 || $written !== strlen($input) || $output === false) {
+        throw new RuntimeException('Команда завершилась с ошибкой: ' . $args[0]);
+    }
+    return $output;
+}
+
+function clSignDirectory($path, $mode)
+{
+    if (!file_exists($path) && !is_link($path)) {
+        if (!mkdir($path, $mode) || !chmod($path, $mode)) {
+            throw new RuntimeException('Не удалось создать ' . $path);
+        }
+    }
+    if (is_link($path) || !is_dir($path) || fileowner($path) !== 0 || (fileperms($path) & 0022) !== 0) {
+        throw new RuntimeException('Ожидается каталог root без права записи для группы и остальных: ' . $path);
+    }
+}
+
+function clSignManifest($key, $repo, array $hashes)
+{
+    $manifest = "[config]\nversion=2\nhash=sha256\nsignedwith=$key\nsignedby=CallLive\nrepo=$repo\ntype=local\n[hashes]\n";
+    foreach ($hashes as $file => $digest) {
+        $manifest .= "$file = $digest\n";
+    }
+    return $manifest;
+}
+
+function clSignAtomicWrite($file, $content)
+{
+    // Создаём файл с правами 0644 и заменяем подпись одним переименованием.
+    $temp = dirname($file) . '/.calllive-sign-' . bin2hex(openssl_random_pseudo_bytes(16));
+    $mask = umask(0022);
+    try {
+        $handle = fopen($temp, 'xb');
+    } finally {
+        umask($mask);
+    }
+    if ($handle === false) {
+        throw new RuntimeException('Не удалось подготовить ' . $file);
+    }
+    try {
+        if (fwrite($handle, $content) !== strlen($content) || !fflush($handle) || !rename($temp, $file)) {
+            throw new RuntimeException('Не удалось записать ' . $file);
+        }
+    } finally {
+        fclose($handle);
+        if (is_file($temp)) {
+            unlink($temp);
+        }
+    }
+}
+
+try {
+    if (!is_readable('/etc/freepbx.conf')) {
+        throw new RuntimeException('Файл /etc/freepbx.conf недоступен. Запустите скрипт на сервере FreePBX.');
+    }
+    $bootstrap_settings = array('freepbx_auth' => false, 'skip_astman' => true);
+    require_once '/etc/freepbx.conf';
+    if (!version_compare(getVersion(), '15.0', '>=') || version_compare(getVersion(), '16.0', '>=')) {
+        throw new RuntimeException('Этот скрипт рассчитан на FreePBX 15.');
+    }
+    $config = FreePBX::Config();
+    $moduleDir = rtrim($config->get('AMPWEBROOT'), '/') . '/admin/modules/calllive';
+    if (is_link($moduleDir) || !is_dir($moduleDir)) {
+        throw new RuntimeException('Установите CallLive 15.0.8 через управление модулями.');
+    }
+    $actual = array();
+    $entries = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($moduleDir, FilesystemIterator::SKIP_DOTS));
+    foreach ($entries as $entry) {
+        $name = substr($entry->getPathname(), strlen($moduleDir) + 1);
+        if ($entry->isLink() || !$entry->isFile()) {
+            throw new RuntimeException('Ожидается обычный файл: ' . $name);
+        }
+        if ($name !== 'module.sig') {
+            $actual[$name] = hash_file('sha256', $entry->getPathname());
+        }
+    }
+    foreach ($expected as $name => $digest) {
+        if (!isset($actual[$name]) || $actual[$name] !== $digest) {
+            throw new RuntimeException('Файл отсутствует или отличается от CallLive 15.0.8: ' . $name);
+        }
+    }
+    $extras = array_diff_key($actual, $expected);
+    if ($extras) {
+        throw new RuntimeException('Обнаружены дополнительные файлы модуля: ' . implode(', ', array_keys($extras)));
+    }
+    echo "Файлы CallLive 15.0.8 совпали с опубликованным архивом.\n";
+
+    $secure = '/etc/freepbx.secure';
+    clSignDirectory($secure, 0755);
+    $lock = fopen($secure . '/.calllive-sign.lock', 'c');
+    if (!$lock || !flock($lock, LOCK_EX | LOCK_NB)) {
+        throw new RuntimeException('Подписание CallLive уже запущено.');
+    }
+    $keyDir = $secure . '/calllive-key';
+    clSignDirectory($keyDir, 0700);
+    if ((fileperms($keyDir) & 0077) !== 0) {
+        throw new RuntimeException('Закрытый ключ должен быть доступен только root: ' . $keyDir);
+    }
+
+    $gpg = is_executable('/usr/bin/gpg') ? '/usr/bin/gpg' : '/usr/bin/gpg2';
+    $signer = array($gpg, '--no-options', '--homedir', $keyDir, '--batch', '--no-tty');
+    $listKeys = array_merge($signer, array('--with-colons', '--fingerprint', '--list-secret-keys'));
+    $keys = clSignCommand($listKeys);
+    if (!preg_match('/^sec:/m', $keys)) {
+        clSignCommand(array_merge($signer, array('--gen-key')), "%no-protection\nKey-Type: RSA\nKey-Length: 3072\nKey-Usage: sign\nName-Real: CallLive Local Module Signing\nExpire-Date: 0\n%commit\n");
+        $keys = clSignCommand($listKeys);
+    }
+    if (!preg_match('/^fpr:::::::::([A-F0-9]{40}):$/m', $keys, $fingerprint)) {
+        throw new RuntimeException('Не найден отпечаток ключа CallLive.');
+    }
+    $key = $fingerprint[1];
+    $sign = array_merge($signer, array('--local-user', $key, '--digest-algo', 'SHA256', '--output', '-', '--clearsign'));
+    $inner = clSignCommand($sign, clSignManifest(substr($key, -16), 'manual', $expected));
+    $outer = clSignCommand($sign, clSignManifest(substr($key, -16), 'local', array('calllive.sig' => hash('sha256', $inner))));
+
+    $verifier = FreePBX::GPG();
+    $webuser = $config->get('AMPASTERISKWEBUSER');
+    $web = posix_getpwnam($webuser);
+    $ring = $verifier->getGpgLocation();
+    if (!$web || is_link($ring)) {
+        throw new RuntimeException('Не удалось определить каталог GPG веб-пользователя FreePBX.');
+    }
+    if (fileowner($ring) === 0 && count(scandir($ring)) === 2) {
+        if (!chmod($ring, 0700) || !chgrp($ring, $web['gid']) || !chown($ring, $web['uid'])) {
+            throw new RuntimeException('Не удалось подготовить каталог GPG FreePBX: ' . $ring);
+        }
+        clearstatcache(true, $ring);
+    }
+    if (fileowner($ring) !== $web['uid']) {
+        throw new RuntimeException('Проверьте владельца каталога GPG FreePBX: ' . $ring);
+    }
+    $public = clSignCommand(array_merge($signer, array('--export', $key)));
+    $asWebUser = $web['uid'] === 0 ? array() : array('/usr/sbin/runuser', '-u', $webuser, '--');
+    clSignCommand(array_merge($asWebUser, array($gpg, '--no-options', '--homedir', $ring, '--batch', '--import')), $public);
+
+    $targets = array($secure . '/calllive.sig' => $inner, $moduleDir . '/module.sig' => $outer);
+    $previous = array();
+    foreach ($targets as $file => $content) {
+        if (is_link($file) || (file_exists($file) && (!is_file($file)
+            || ($file === $secure . '/calllive.sig' && fileowner($file) !== 0)))) {
+            throw new RuntimeException('Проверьте тип и владельца файла подписи: ' . $file);
+        }
+        $previous[$file] = file_exists($file) ? file_get_contents($file) : null;
+        if ($previous[$file] === false) {
+            throw new RuntimeException('Не удалось прочитать прежнюю подпись: ' . $file);
+        }
+    }
+
+    $written = array();
+    try {
+        foreach ($targets as $file => $content) {
+            clSignAtomicWrite($file, $content);
+            $written[] = $file;
+            clSignCommand(array_merge($asWebUser, array('/usr/bin/test', '-r', $file)));
+        }
+        $modules = module_functions::create();
+        $result = $modules->updateSignature('calllive');
+        if ($result['status'] !== (FreePBX\GPG::STATE_GOOD | FreePBX\GPG::STATE_TRUSTED)) {
+            $details = isset($result['details']) ? ' ' . implode(' ', $result['details']) : '';
+            throw new RuntimeException('FreePBX не принял подпись.' . $details);
+        }
+    } catch (Exception $error) {
+        foreach (array_reverse($written) as $file) {
+            if ($previous[$file] === null) {
+                unlink($file);
+            } else {
+                clSignAtomicWrite($file, $previous[$file]);
+            }
+        }
+        if (isset($modules)) {
+            $modules->updateSignature('calllive');
+        }
+        throw $error;
+    }
+    echo "Локальная подпись CallLive действительна.\n";
+    echo "Отпечаток ключа: $key\n";
+} catch (Exception $error) {
+    fwrite(STDERR, $error->getMessage() . "\n");
+    exit(1);
+}
+
+CALLLIVE_SIGN_1508

@@ -9,9 +9,15 @@ import re
 import socket
 import tempfile
 import time
+import sys
 from collections import defaultdict, deque
 from datetime import datetime
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from telemetry import Journal, VERSION, quality
+
+STARTED = time.monotonic()
 
 SNAPSHOT = Path("/run/freepbx-calllive/snapshot.json")
 DAILY = Path("/var/lib/freepbx-calllive/daily.json")
@@ -29,6 +35,7 @@ EVENTS = {
     "dialbegin", "dialend", "bridgecreate", "bridgedestroy", "bridgeenter",
     "bridgeleave", "bridgemerge", "extensionstatus", "hold", "unhold",
     "parkedcall", "unparkedcall", "parkedcalltimeout", "parkedcallgiveup",
+    "blindtransfer", "attendedtransfer", "queuecallerjoin", "queuecallerleave", "agentconnect", "agentcomplete",
 }
 MEDIA_BRIDGES = {"simple_bridge", "native_rtp", "softmix"}
 CONNECTED_PHASES = {"connected", "held", "conference"}
@@ -350,8 +357,9 @@ class LiveConversations:
 
     EVENTS = {"bridgeenter", "bridgeleave", "bridgedestroy", "newstate", "hangup"}
 
-    def __init__(self, daily):
+    def __init__(self, daily, journal=None):
         self.daily = daily
+        self.journal = journal
         self.channels = {}
         self.bridges = {}
         self.pending = None
@@ -372,6 +380,8 @@ class LiveConversations:
     def update(self, continuous=True):
         groups = group_calls(self.channels, self.bridges, connected_only=True)
         self.daily.observe(groups, time.time(), continuous=continuous)
+        if self.journal is not None:
+            self.journal.peaks(groups, self.channels, time.time(), self.daily.view())
 
     def consume(self, message):
         if message.get("actionid") or message.get("event", "").lower() not in self.EVENTS:
@@ -554,21 +564,27 @@ def write_json(path, data):
 
 def publish(path, data):
     data.update(schema=1, updated_at=int(time.time()))
+    data["collector_version"] = VERSION
+    data["diagnostics"] = dict(data.get("diagnostics", {}), python=sys.version.split()[0],
+                               uptime_seconds=int(time.monotonic() - STARTED), sample_interval=MEDIA_INTERVAL,
+                               media_max_age=MEDIA_MAX_AGE, event_scope="call,agent")
     write_json(path, data)
 
 
-def run_session(connection, username, secret, path, once=False, daily=None):
+def run_session(connection, username, secret, path, once=False, daily=None, journal=None):
     events = LiveEvents()
     media = LiveMedia()
-    conversations = LiveConversations(daily) if daily is not None else None
+    conversations = LiveConversations(daily, journal) if daily is not None else None
 
     def consume(message):
         events.consume(message)
+        if journal is not None:
+            journal.consume(message)
         if conversations is not None:
             conversations.consume(message)
 
     ami = Ami(connection, consume)
-    ami.exchange("Login", Username=username, Secret=secret, Events="call")
+    ami.exchange("Login", Username=username, Secret=secret, Events="call,agent")
     next_check = 0.0
     earliest = 0.0
     while True:
@@ -581,6 +597,15 @@ def run_session(connection, username, secret, path, once=False, daily=None):
             media.attach(ami, data)
             if daily is not None:
                 data["daily"] = daily.view()
+            if journal is not None:
+                journal.observe(data)
+                data["journal"] = journal.view()
+            for group in data["groups"]:
+                measured = [quality(channel.get("rtp")) for channel in data["channels"] if channel["id"] in group["channels"]]
+                known = [q for q in measured if q]
+                if known:
+                    group["quality"] = {"score": min(q["score"] for q in known),
+                                        "partial": len(known) < len(measured) or any(q["partial"] for q in known)}
             publish(path, data)
             earliest = now + MIN_REFRESH_SECONDS
             next_check = time.monotonic() + RECONCILE_SECONDS
@@ -599,6 +624,7 @@ def main():
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="Check AMI and print counts only")
+    parser.add_argument("--version", action="version", version=VERSION)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     username = os.environ.get("CALLLIVE_AMI_USER", "freepbx-calllive")
@@ -610,21 +636,28 @@ def main():
         parser.error("Invalid CALLLIVE_AMI_PORT")
 
     daily = None if args.check else DailyStats(DAILY)
+    try:
+        retention = int(os.environ.get("CALLLIVE_RETENTION_DAYS", "30"))
+        max_mb = int(os.environ.get("CALLLIVE_HISTORY_MB", "512"))
+    except ValueError:
+        parser.error("Invalid journal retention/storage limit")
+    journal = None if args.check else Journal(DAILY.parent, write_json, retention, max_mb)
     delay = 1
     while True:
         started = time.monotonic()
         try:
             with socket.create_connection(("127.0.0.1", int(port)), timeout=IO_TIMEOUT) as connection:
-                data = run_session(connection, username, secret, SNAPSHOT, once=args.check, daily=daily)
+                data = run_session(connection, username, secret, SNAPSHOT, once=args.check, daily=daily, journal=journal)
                 if args.check:
-                    print("AMI OK. Channels: {}, hints: {}.".format(len(data["channels"]), len(data["hints"])))
+                    print("CallLive {}. AMI OK. Channels: {}, hints: {}.".format(VERSION, len(data["channels"]), len(data["hints"])))
                     return 0
         except (OSError, AmiError) as error:
             state = error.state if isinstance(error, AmiError) else "ami_offline"
             logging.warning("%s: %s", state, error)
             if args.check:
                 return 1
-            publish(SNAPSHOT, {"state": state, "daily": daily.view()})
+            journal.discontinuity()
+            publish(SNAPSHOT, {"state": state, "daily": daily.view(), "journal": journal.view()})
             if time.monotonic() - started > 30:
                 delay = 1
             time.sleep(delay)

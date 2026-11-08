@@ -200,3 +200,41 @@
     #calllive .cl-table { min-width: 455px; }
     #calllive .cl-health { align-items: flex-start; }
 }
+#calllive .cl-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+#calllive .cl-tabs button { border: 1px solid var(--cl-line); background: #fff; color: var(--cl-ink); padding: 7px 13px; border-radius: 7px; font: inherit; }
+#calllive .cl-tabs button[aria-pressed="true"] { background: #194b55; color: #fff; border-color: #194b55; }
+#calllive .cl-tabs button:focus-visible { outline: 2px solid #26797a; outline-offset: 2px; }
+#calllive .cl-toolbar { align-items: end; display: flex; flex-wrap: wrap; gap: 10px 14px; margin: 0; padding: 0 16px 12px; }
+#calllive .cl-toolbar label { display: flex; flex-direction: column; gap: 4px; font-weight: 400; margin: 0; }
+#calllive .cl-toolbar label:has(input[type="checkbox"]) { align-items: center; flex-direction: row; padding-bottom: 6px; }
+#calllive .cl-toolbar input, #calllive select { background: #fff; border: 1px solid #9eb2c1; border-radius: 5px; color: var(--cl-ink); padding: 5px 7px; max-width: 100%; }
+#calllive .cl-toolbar input[type="number"] { width: 100px; }
+#calllive .cl-toolbar input[type="checkbox"] { margin: 0; }
+#calllive .cl-view-note { color: var(--cl-muted); margin: 10px 16px; }
+#calllive .cl-more { margin: 12px 16px; }
+#calllive .cl-alerts { background: #fff6dc; color: #774c0e; margin: 0; padding: 8px 16px; }
+#calllive .cl-problem-text { color: #8c252c; width: 100%; }
+#calllive .cl-insights { border-top: 1px solid var(--cl-line); padding: 12px 17px; }
+#calllive .cl-insights h3, #calllive .cl-update h3 { font-size: 16px; margin: 12px 0 8px; }
+#calllive #cl-quality-explanation { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 14px; }
+#calllive #cl-quality-explanation > p, #calllive #cl-quality-explanation > dl { grid-column: 1 / -1; }
+#calllive .cl-chart-grid { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 10px; }
+#calllive .cl-chart { border: 1px solid var(--cl-line); border-radius: 8px; margin: 0; min-width: 0; padding: 8px; }
+#calllive .cl-chart figcaption { font-size: 13px; font-weight: 600; padding: 2px 4px; }
+#calllive .cl-chart svg { display: block; width: 100%; height: auto; }
+#calllive .cl-chart svg text { font: 10px system-ui, sans-serif; fill: #51697b; }
+#calllive .cl-chart svg circle:hover { r: 5; fill: #8c252c; }
+#calllive .cl-stat-chart { padding: 10px 16px; }
+#calllive .cl-stat-chart .cl-chart svg { max-height: 230px; }
+#calllive .cl-timeline { list-style: none; padding: 0; margin: 0; max-height: 270px; overflow: auto; }
+#calllive .cl-timeline li { border-left: 2px solid #bad8d9; display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 2px 8px; margin-left: 4px; padding: 6px 10px; }
+#calllive .cl-timeline time { color: var(--cl-muted); font-variant-numeric: tabular-nums; }
+#calllive .cl-timeline span { grid-column: 2; overflow-wrap: anywhere; font-size: 12px; color: var(--cl-muted); }
+#calllive .cl-update { border-top: 1px solid var(--cl-line); padding: 12px 16px; }
+#calllive .cl-update textarea { border: 1px solid #9eb2c1; border-radius: 6px; background: #f4f8fa; color: #12283a; font: 13px monospace; width: 100%; resize: vertical; padding: 8px; margin-bottom: 8px; }
+#calllive .cl-update .cl-toolbar { padding: 0 0 12px; }
+#calllive #cl-diagnostics-fields { max-width: 800px; }
+@media (max-width: 730px) {
+    #calllive .cl-chart-grid, #calllive #cl-quality-explanation { grid-template-columns: 1fr; }
+    #calllive .cl-tabs button { flex: 1 1 auto; }
+}
