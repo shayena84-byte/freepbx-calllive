@@ -27,8 +27,8 @@ class Calllive implements \BMO
             return false;
         }
         $user = $_SESSION['AMP_user'];
-        if (!$user->checkSection('*') || trim((string) $user->getExtensionLow()) !== ''
-            || trim((string) $user->getExtensionHigh()) !== '') {
+        // This section grants PBX-wide read access to the monitor and its detail cards.
+        if (!$user->checkSection('calllive')) {
             return false;
         }
 

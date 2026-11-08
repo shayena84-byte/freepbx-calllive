@@ -2,7 +2,7 @@
 <module>
     <rawname>calllive</rawname>
     <name>Монитор телефонии</name>
-    <version>15.0.6</version>
+    <version>15.0.7</version>
     <publisher>CallLive</publisher>
     <license>GPLv3+</license>
     <licenselink>https://www.gnu.org/licenses/gpl-3.0.html</licenselink>

@@ -5,7 +5,7 @@ if (!defined('FREEPBX_IS_AUTH')) {
     exit;
 }
 if (!\FreePBX::Calllive()->canView()) {
-    echo '<div class="alert alert-warning">Монитор телефонии доступен администраторам с полным доступом к АТС.</div>';
+    echo '<div class="alert alert-warning">Для просмотра разрешите пользователю раздел «Монитор телефонии» в настройках доступа FreePBX.</div>';
     return;
 }
 ?>
