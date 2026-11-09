@@ -4,7 +4,8 @@ namespace FreePBX\modules;
 
 class Calllive implements \BMO
 {
-    const VERSION = '15.0.8';
+    const VERSION = '15.0.9';
+    const COLLECTOR_VERSION = '15.0.8';
     const STORAGE = '/var/lib/freepbx-calllive';
     const SNAPSHOT = '/run/freepbx-calllive/snapshot.json';
     const MAX_BYTES = 4194304;
@@ -90,6 +91,7 @@ class Calllive implements \BMO
         $snapshot = $this->readSnapshot();
         $snapshot['thresholds'] = $this->thresholds();
         $snapshot['module_version'] = self::VERSION;
+        $snapshot['required_collector_version'] = self::COLLECTOR_VERSION;
         if (isset($_GET['inventory']) && $_GET['inventory'] === '1') {
             try {
                 $database = $this->freepbx->Database;
@@ -291,7 +293,8 @@ class Calllive implements \BMO
         $snapshot = $this->readSnapshot();
         $version = isset($snapshot['collector_version']) ? $snapshot['collector_version'] : null;
         return array('state' => 'ready', 'module_version' => self::VERSION, 'collector_version' => $version,
-            'compatible' => $version === self::VERSION, 'pbx_state' => $snapshot['state'],
+            'required_collector_version' => self::COLLECTOR_VERSION,
+            'compatible' => $version === self::COLLECTOR_VERSION, 'pbx_state' => $snapshot['state'],
             'updated_at' => isset($snapshot['updated_at']) ? $snapshot['updated_at'] : null,
             'snapshot_readable' => is_readable(self::SNAPSHOT),
             'journal_readable' => is_readable(self::STORAGE . '/statistics.json'),

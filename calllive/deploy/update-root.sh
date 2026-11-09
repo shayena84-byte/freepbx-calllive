@@ -4,7 +4,8 @@
 set -Eeuo pipefail
 umask 027
 export PYTHONDONTWRITEBYTECODE=1
-cl_version=15.0.8
+cl_version=15.0.9
+cl_collector_version=15.0.8
 cl_source="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cl_backup_root=/var/backups/freepbx-calllive
 cl_paths=(/opt/freepbx-calllive/collector.py /opt/freepbx-calllive/telemetry.py /opt/freepbx-calllive/release.json /etc/systemd/system/freepbx-calllive.service /etc/freepbx-calllive.env /etc/asterisk/manager_calllive.conf /etc/asterisk/manager_custom.conf)
@@ -89,14 +90,14 @@ for cl_candidate in "$cl_current_python" /usr/bin/python3 /usr/bin/python3.6 /us
     fi
 done
 [ -n "$cl_python" ] || die 'Нужен установленный Python 3.6 или новее. Поддерживается /usr/bin/python3.6; пакеты Python не заменяются.'
-"$cl_python" - "$cl_source/deploy" <<'PY'
+"$cl_python" - "$cl_source/deploy" "$cl_collector_version" <<'PY'
 import pathlib, sys
 source = pathlib.Path(sys.argv[1])
 for name in ('collector.py', 'telemetry.py'):
     compile((source / name).read_text(encoding='utf-8'), str(source / name), 'exec')
 sys.path.insert(0, str(source))
 import telemetry
-assert telemetry.VERSION == '15.0.8'
+assert telemetry.VERSION == sys.argv[2]
 PY
 say "Проверены FreePBX 15, файлы CallLive $cl_version и $cl_python."
 
@@ -214,7 +215,7 @@ if [ "$cl_was_active" = 1 ]; then systemctl restart freepbx-calllive.service;
 else systemctl enable freepbx-calllive.service; systemctl start freepbx-calllive.service; fi
 cl_ready=0
 for cl_attempt in {1..20}; do
-    if "$cl_python" - "$cl_version" "$cl_started" <<'PY'
+    if "$cl_python" - "$cl_collector_version" "$cl_started" <<'PY'
 import json, sys
 try:
     with open('/run/freepbx-calllive/snapshot.json') as f: data=json.load(f)
@@ -229,7 +230,7 @@ PY
 done
 [ "$cl_ready" = 1 ] || { false; }
 trap - EXIT
-say "Сборщик CallLive $cl_version работает. AMI и запись истории проверены."
+say "Сборщик CallLive $cl_collector_version работает. AMI и запись истории проверены."
 say "Резервная копия: $cl_backup"
 printf 'Команда отката: bash %q --rollback %q\n' "$cl_source/deploy/update-root.sh" "$cl_backup"
 say 'Теперь примените локальную подпись из релиза и обновите страницу монитора.'

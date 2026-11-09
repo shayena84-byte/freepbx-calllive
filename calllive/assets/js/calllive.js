@@ -673,7 +673,10 @@
         const notice = byId('cl-notice');
         const details = [state[2]];
         if (inventoryError) details.push('Справочник FreePBX временно недоступен.');
-        if (data.collector_version !== '15.0.8' && data.state === 'ready') details.push('Для истории, графиков и статистики обновите сборщик до 15.0.8 во вкладке «Диагностика».');
+        const requiredCollector = data.required_collector_version;
+        if (requiredCollector && data.collector_version !== requiredCollector && data.state === 'ready') {
+            details.push('Для истории, графиков и статистики обновите сборщик до ' + requiredCollector + ' во вкладке «Диагностика».');
+        }
         if (data.journal && data.journal.storage_error) details.push('История не сохраняется: проверьте диск и права каталога /var/lib/freepbx-calllive.');
         if (data.journal && (data.journal.capacity_exceeded || data.journal.capacity_drops)) details.push('Достигнут предел хранения истории; часть вызовов могла не сохраниться. Подробности в диагностике.');
         const daily = data.daily;
@@ -1316,7 +1319,7 @@
             byId('cl-diagnostics-fields').textContent = '';
             byId('cl-diagnostics-fields').appendChild(detailFields([
                 ['Модуль', d.module_version], ['Сборщик', d.collector_version || 'Версия не определена (старый сборщик или нет свежего снимка)'],
-                ['Совместимость', d.compatible ? 'Версии совпадают' : 'Требуется обновление сборщика / проверка службы'],
+                ['Совместимость', d.compatible ? 'Сборщик совместим' : 'Требуется обновление сборщика / проверка службы'],
                 ['Связь с АТС', (health[d.pbx_state] || health.collector_unavailable)[0]],
                 ['Последний снимок', dateTime(d.updated_at)], ['Чтение снимка / истории', (d.snapshot_readable ? 'Да' : 'Нет') + ' / ' + (d.journal_readable ? 'Да' : 'Нет')],
                 ['Python', runtime.python], ['Работа сборщика', Number.isFinite(runtime.uptime_seconds) ? formatDuration(runtime.uptime_seconds) : unknown],
@@ -1331,7 +1334,7 @@
             byId('cl-update-command').value = d.update_command || '';
             if (d.can_manage) for (const key of Object.keys(d.thresholds)) byId('cl-setting-' + key).value = d.thresholds[key];
             byId('cl-diagnostics-status').textContent = d.compatible ? 'Проверка завершена. ' + (health[d.pbx_state] || health.collector_unavailable)[2]
-                : 'Новые функции требуют сборщик ' + d.module_version + '. Обновление доступно администратору с полными правами.';
+                : 'Для истории, графиков и статистики нужен сборщик ' + d.required_collector_version + '. Обновление доступно администратору с полными правами.';
         } catch (error) { byId('cl-diagnostics-status').textContent = error.message; }
     }
 
