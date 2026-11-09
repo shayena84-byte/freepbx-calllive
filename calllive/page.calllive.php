@@ -11,33 +11,47 @@ if (!\FreePBX::Calllive()->canView()) {
 ?>
 <div id="calllive" data-csrf="<?php echo htmlspecialchars(\FreePBX::Calllive()->csrfToken(), ENT_QUOTES, 'UTF-8'); ?>">
     <header class="cl-header">
-        <div class="cl-heading">
-            <div class="cl-kicker">FREEPBX · ASTERISK</div>
-            <h1>Монитор телефонии</h1>
-            <p>Соединения, транки и состояния внутренних номеров</p>
+        <div class="cl-overview">
+            <div class="cl-heading">
+                <div class="cl-kicker">FREEPBX · ASTERISK</div>
+                <h1>Монитор телефонии</h1>
+                <p>Соединения, транки и состояния внутренних номеров</p>
+            </div>
+            <div class="cl-daily">
+                <p id="cl-daily-date">За сутки по времени АТС</p>
+                <dl>
+                    <div><dt>Максимум одновременных разговоров</dt><dd id="cl-daily-peak">—</dd></div>
+                    <div><dt>Самый длинный разговор</dt><dd id="cl-daily-longest">—</dd></div>
+                </dl>
+            </div>
+            <div class="cl-health">
+                <span id="cl-status" class="cl-badge" data-tone="neutral" role="status">Подключение…</span>
+                <span id="cl-updated"></span>
+            </div>
         </div>
-        <div class="cl-daily">
-            <p id="cl-daily-date">За сутки по времени АТС</p>
-            <dl>
-                <div><dt>Максимум одновременных разговоров</dt><dd id="cl-daily-peak">—</dd></div>
-                <div><dt>Самый длинный разговор</dt><dd id="cl-daily-longest">—</dd></div>
-            </dl>
-        </div>
-        <div class="cl-health">
-            <span id="cl-status" class="cl-badge" data-tone="neutral" role="status">Подключение…</span>
-            <span id="cl-updated"></span>
-        </div>
+        <nav class="cl-tabs" aria-label="Разделы монитора">
+            <button type="button" data-cl-view="monitor" aria-controls="cl-view-monitor" aria-pressed="true">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M2 12h4l3-7 5 14 3-7h5"/></svg>
+                Сейчас
+            </button>
+            <button type="button" data-cl-view="history" aria-controls="cl-view-history" aria-pressed="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg>
+                История
+            </button>
+            <button type="button" data-cl-view="statistics" aria-controls="cl-view-statistics" aria-pressed="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4v16h16M8 15v-4m4 4V8m4 7V5"/></svg>
+                Статистика
+            </button>
+            <button type="button" data-cl-view="diagnostics" aria-controls="cl-view-diagnostics" aria-pressed="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="5" y="4" width="14" height="16" rx="2"/><path d="m8 12 2.5 2.5L16 9"/></svg>
+                Диагностика
+            </button>
+        </nav>
     </header>
 
     <p id="cl-notice" class="cl-notice" hidden></p>
     <noscript><p class="cl-notice">Для обновления панели включите JavaScript.</p></noscript>
 
-    <nav class="cl-tabs" aria-label="Разделы монитора">
-        <button type="button" data-cl-view="monitor" aria-pressed="true">Сейчас</button>
-        <button type="button" data-cl-view="history" aria-pressed="false">История</button>
-        <button type="button" data-cl-view="statistics" aria-pressed="false">Статистика</button>
-        <button type="button" data-cl-view="diagnostics" aria-pressed="false">Диагностика и обновление</button>
-    </nav>
     <div id="cl-view-monitor">
     <dl class="cl-metrics">
         <div><dt>Активные соединения</dt><dd id="cl-count-connections">—</dd></div>
