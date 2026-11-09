@@ -54,9 +54,18 @@ if (!\FreePBX::Calllive()->canView()) {
 
     <div id="cl-view-monitor">
     <dl class="cl-metrics">
-        <div><dt>Активные соединения</dt><dd id="cl-count-connections">—</dd></div>
-        <div><dt>Занятые транки</dt><dd id="cl-count-trunks">—</dd></div>
-        <div><dt>Номера с активностью</dt><dd id="cl-count-extensions">—</dd></div>
+        <div>
+            <dt><span class="cl-metric-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M2 12h4l3-7 5 14 3-7h5"/></svg></span><span>Активные соединения</span></dt>
+            <dd id="cl-count-connections">—</dd>
+        </div>
+        <div>
+            <dt><span class="cl-metric-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M12 7v4M5 16v-5h14v5"/><rect x="9" y="2" width="6" height="5" rx="1"/><rect x="2" y="16" width="6" height="5" rx="1"/><rect x="16" y="16" width="6" height="5" rx="1"/></svg></span><span>Занятые транки</span></dt>
+            <dd id="cl-count-trunks">—</dd>
+        </div>
+        <div>
+            <dt><span class="cl-metric-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6m1 3a5 5 0 0 1 4 5v1"/></svg></span><span>Активные номера</span></dt>
+            <dd id="cl-count-extensions">—</dd>
+        </div>
     </dl>
 
     <section class="cl-section" aria-labelledby="cl-calls-title">
@@ -69,8 +78,8 @@ if (!\FreePBX::Calllive()->canView()) {
         </div>
         <p id="cl-alerts" class="cl-alerts" role="status" hidden></p>
         <div class="cl-table-wrap">
-            <table class="cl-table">
-                <thead><tr><th scope="col">Статус</th><th scope="col">Участники / каналы</th><th scope="col">Транки</th><th scope="col">Качество</th><th scope="col">С начала вызова</th></tr></thead>
+            <table class="cl-table cl-calls-table">
+                <thead><tr><th scope="col">Статус</th><th scope="col">Участники и каналы</th><th scope="col">Транки</th><th scope="col">Качество</th><th scope="col" class="cl-call-age">С начала вызова</th></tr></thead>
                 <tbody id="cl-calls"><tr><td colspan="5">Ожидание данных…</td></tr></tbody>
             </table>
         </div>
@@ -171,7 +180,7 @@ if (!\FreePBX::Calllive()->canView()) {
         <p class="cl-view-note">Уведомления отображаются в открытой панели. Пороги общие для пользователей; изменяет администратор с полными правами.</p>
     </section>
 
-    <dialog id="cl-detail" class="cl-detail" aria-labelledby="cl-detail-title">
+    <dialog id="cl-detail" class="cl-detail cl-call-dialog" aria-labelledby="cl-detail-title">
         <div class="cl-section-title">
             <h2 id="cl-detail-title">Технические детали разговора</h2>
             <form method="dialog">
@@ -185,13 +194,25 @@ if (!\FreePBX::Calllive()->canView()) {
         </div>
         <section id="cl-insights" class="cl-insights" hidden>
             <p id="cl-record-summary" class="cl-detail-note"></p>
+            <div id="cl-record-review" class="cl-record-review" hidden>
+                <section class="cl-route-panel" aria-labelledby="cl-timeline-title">
+                    <h3 id="cl-timeline-title" tabindex="-1">Маршрут разговора</h3>
+                    <p class="cl-detail-note">События Asterisk в порядке наблюдения.</p>
+                    <ol id="cl-timeline" class="cl-timeline"></ol>
+                </section>
+                <section class="cl-quality-panel" aria-labelledby="cl-chart-title">
+                    <h3 id="cl-chart-title" tabindex="-1">Графики качества</h3>
+                    <div class="cl-chart-controls">
+                        <label class="cl-search">Канал <select id="cl-chart-channel"><option value="">Худшие измерения всех каналов</option></select></label>
+                        <button type="button" id="cl-clear-marker" class="cl-detail-link" hidden>Убрать отметку</button>
+                    </div>
+                    <p id="cl-chart-selection" class="cl-chart-selection" role="status" hidden></p>
+                    <div id="cl-quality-charts" class="cl-chart-grid"></div>
+                    <p id="cl-chart-note" class="cl-detail-note"></p>
+                </section>
+            </div>
             <h3>Как рассчитано качество</h3>
             <div id="cl-quality-explanation"></div>
-            <label class="cl-search">Графики по каналу <select id="cl-chart-channel"><option value="">Худшие измерения всех каналов</option></select></label>
-            <div id="cl-quality-charts" class="cl-chart-grid"></div>
-            <p id="cl-chart-note" class="cl-detail-note"></p>
-            <h3>События разговора</h3>
-            <ol id="cl-timeline" class="cl-timeline"></ol>
             <p id="cl-record-notice" class="cl-detail-note" role="status"></p>
         </section>
         <div id="cl-detail-legs" class="cl-detail-legs"></div>

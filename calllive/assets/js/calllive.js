@@ -54,6 +54,7 @@
     let recordTimer = null;
     let recordRequest = null;
     let shownRecord = null;
+    let selectedEvent = null;
     let historyCursor = null;
     let historyRecords = [];
     let historyGeneration = 0;
@@ -170,8 +171,7 @@
         let detail;
 
         if (extension) {
-            label = String(extension.extension);
-            detail = extension.name || '';
+            label = [String(extension.extension), extension.name].filter(Boolean).join(' · ');
         } else if (trunk) {
             const caller = formatNumber(channel.caller);
             const connected = formatNumber(channel.connected);
@@ -190,10 +190,11 @@
             }
         } else {
             label = formatNumber(channel.caller) || formatNumber(channel.caller_name) || channel.name;
-            detail = item.ambiguous ? 'Несколько соответствий · ' + channel.name : channel.name;
+            detail = item.ambiguous ? 'Несколько соответствий' : '';
         }
         element.appendChild(node('strong', label));
-        if (detail && detail !== label) element.appendChild(node('small', detail));
+        const technical = [detail, channel.name].filter((value) => value && value !== label).join(' · ');
+        if (technical) element.appendChild(node('small', technical));
         return element;
     }
 
@@ -399,7 +400,11 @@
             const phase = phases[group.phase] || phases.setup;
             const connected = connectedPhases.has(group.phase);
             cell(row, badge(phase[0], phase[1]));
+            const peopleCell = node('div');
             const participants = node('div', '', 'cl-participants');
+            const meta = node('div', '', 'cl-call-meta');
+            peopleCell.appendChild(participants);
+            peopleCell.appendChild(meta);
             const trunks = new Set();
             people.forEach((person, position) => {
                 if (position) {
@@ -412,12 +417,12 @@
             });
             if (connected || group.call_id) {
                 const key = callKey(group);
-                const button = node('button', 'Подробнее', 'cl-detail-link');
+                const button = node('button', 'Подробнее', 'cl-detail-link cl-call-details');
                 button.type = 'button';
                 button.dataset.callKey = key;
                 button.setAttribute('aria-haspopup', 'dialog');
                 button.setAttribute('aria-controls', 'cl-detail');
-                participants.appendChild(button);
+                meta.appendChild(button);
                 callButtons.set(key, button);
                 row.className = 'cl-call-open';
                 row.addEventListener('click', () => {
@@ -427,12 +432,12 @@
                     detailDialog.showModal();
                 });
             }
-            if (activeProblems.length) participants.appendChild(node('small', activeProblems.map((p) => p.label).join(' · '), 'cl-problem-text'));
-            cell(row, participants);
+            for (const problem of activeProblems) meta.appendChild(badge(problem.label, problem.kind === 'wait' ? 'wait' : 'danger'));
+            cell(row, peopleCell);
             cell(row, Array.from(trunks).join(', ') || unknown);
             cell(row, connected ? qualityBadge(callQuality(people, group.channels.length))
                 : qualityBadge(null, 'Оценка доступна после соединения и получения замеров'));
-            cell(row, duration(group.age), 'cl-time');
+            cell(row, duration(group.age), 'cl-time cl-call-age');
             rows.push(row);
         }
         return rows;
@@ -668,7 +673,7 @@
         const notice = byId('cl-notice');
         const details = [state[2]];
         if (inventoryError) details.push('Справочник FreePBX временно недоступен.');
-        if (data.collector_version !== '15.0.8' && data.state === 'ready') details.push('Для истории, графиков и статистики обновите сборщик до 15.0.8: вкладка «Диагностика и обновление».');
+        if (data.collector_version !== '15.0.8' && data.state === 'ready') details.push('Для истории, графиков и статистики обновите сборщик до 15.0.8 во вкладке «Диагностика».');
         if (data.journal && data.journal.storage_error) details.push('История не сохраняется: проверьте диск и права каталога /var/lib/freepbx-calllive.');
         if (data.journal && (data.journal.capacity_exceeded || data.journal.capacity_drops)) details.push('Достигнут предел хранения истории; часть вызовов могла не сохраниться. Подробности в диагностике.');
         const daily = data.daily;
@@ -918,8 +923,13 @@
         recordSelection = null;
         recordTimer = null;
         shownRecord = null;
+        selectedEvent = null;
         byId('cl-insights').hidden = true;
-        for (const id of ['cl-record-summary', 'cl-quality-explanation', 'cl-quality-charts', 'cl-timeline', 'cl-record-notice']) byId(id).textContent = '';
+        byId('cl-record-review').hidden = true;
+        byId('cl-clear-marker').hidden = true;
+        byId('cl-chart-selection').hidden = true;
+        for (const id of ['cl-record-summary', 'cl-quality-explanation', 'cl-chart-channel', 'cl-quality-charts',
+            'cl-chart-selection', 'cl-chart-note', 'cl-timeline', 'cl-record-notice']) byId(id).textContent = '';
     }
 
     function openRecord(id, archived) {
@@ -976,15 +986,100 @@
     }
 
     const eventNames = {
-        start: 'Начало наблюдения вызова', observed: 'Вызов уже существовал при подключении сборщика', channel: 'Создан канал',
-        dialbegin: 'Начало дозвона', dialend: 'Результат дозвона', ringing: 'Дозвон', connected: 'Разговор',
-        held: 'Удержание', hold: 'Удержание', unhold: 'Снятие с удержания', conference: 'Групповое соединение',
-        queue: 'В очереди', queuecallerjoin: 'Вход в очередь', queuecallerleave: 'Выход из очереди',
-        agentconnect: 'Соединение с оператором', agentcomplete: 'Завершение у оператора',
-        blindtransfer: 'Перевод без консультации', attendedtransfer: 'Перевод с консультацией',
-        hangup: 'Завершён канал', end: 'Вызов завершён', gap: 'Потеряно наблюдение AMI', resumed: 'Наблюдение восстановлено',
-        parked: 'Парковка', waiting: 'Ожидание', service: 'Сервис АТС', setup: 'Создание соединения',
+        start: ['Начало наблюдения вызова'], observed: ['Вызов уже существовал при подключении сборщика'], channel: ['Создан канал'],
+        dialbegin: ['Начало дозвона', 'ring'], dialend: ['Результат дозвона'], ringing: ['Дозвон', 'ring'], connected: ['Разговор', 'answer'],
+        held: ['Удержание', 'hold'], hold: ['Удержание', 'hold'], unhold: ['Снятие с удержания', 'answer'], conference: ['Групповое соединение', 'answer'],
+        queue: ['В очереди', 'hold'], queuecallerjoin: ['Вход в очередь', 'hold'], queuecallerleave: ['Выход из очереди'],
+        agentconnect: ['Соединение с оператором', 'answer'], agentcomplete: ['Завершение у оператора', 'end'],
+        blindtransfer: ['Перевод без консультации', 'transfer'], attendedtransfer: ['Перевод с консультацией', 'transfer'],
+        hangup: ['Завершён канал', 'end'], end: ['Вызов завершён', 'end'], gap: ['Потеряно наблюдение AMI', 'gap'], resumed: ['Наблюдение восстановлено', 'answer'],
+        parked: ['Парковка', 'hold'], waiting: ['Ожидание', 'hold'], service: ['Сервис АТС'], setup: ['Создание соединения'],
     };
+
+    const eventIcons = {
+        note: ['neutral', 'M8 6h8M8 12h8M8 18h5'],
+        ring: ['wait', 'M5 16h14l-2-3V9a5 5 0 0 0-10 0v4l-2 3Zm5 4h4'],
+        answer: ['ok', 'm5 12 4 4L19 6'],
+        hold: ['wait', 'M9 6v12m6-12v12'],
+        transfer: ['accent', 'M4 8h15m-4-4 4 4-4 4M20 16H5m4-4-4 4 4 4'],
+        end: ['neutral', 'M6 6h12v12H6Z'],
+        gap: ['danger', 'M12 5v9m0 4v1'],
+    };
+
+    function updateTimelineSelection() {
+        for (const button of byId('cl-timeline').querySelectorAll('button[data-event-key]')) {
+            button.setAttribute('aria-pressed', String(Boolean(selectedEvent && selectedEvent.key === button.dataset.eventKey)));
+        }
+    }
+
+    function selectTimelineEvent(event, label, key) {
+        const channel = event.channel && shownRecord.channels.find((c) => c.name === event.channel);
+        const measured = channel && shownRecord.samples.some((sample) => sample.channels.some((c) => c.id === channel.id));
+        byId('cl-chart-channel').value = measured ? channel.id : '';
+        selectedEvent = {at: event.at, label, key};
+        updateTimelineSelection();
+        renderQualityCharts();
+        const title = byId('cl-chart-title');
+        title.focus({preventScroll: true});
+        title.scrollIntoView({block: 'nearest'});
+    }
+
+    function renderTimeline(record) {
+        const hasSamples = record.samples.length > 0;
+        const signature = JSON.stringify([hasSamples, record.answered_at, record.timeline]);
+        if (recordSelection.timelineSignature === signature) return;
+        recordSelection.timelineSignature = signature;
+        const timeline = byId('cl-timeline');
+        const scrollTop = timeline.scrollTop;
+        const active = document.activeElement;
+        const focusedKey = active && active.dataset && active.dataset.eventKey;
+        let focused = null;
+        const perSecond = new Map();
+        timeline.textContent = '';
+        for (const event of record.timeline) {
+            const entryType = eventNames[event.kind];
+            const [name, style = 'note'] = Array.isArray(entryType) ? entryType : [event.kind || 'Событие'];
+            const label = event.kind === 'connected' && event.at === record.answered_at ? 'Ответ на вызов' : name;
+            const [tone, path] = eventIcons[style];
+            const entry = node('li');
+            const icon = node('span', '', 'cl-event-icon');
+            icon.dataset.tone = tone;
+            icon.setAttribute('aria-hidden', 'true');
+            const graphic = svgNode('svg', {viewBox: '0 0 24 24', focusable: 'false'});
+            graphic.appendChild(svgNode('path', {d: path}));
+            icon.appendChild(graphic);
+            entry.appendChild(icon);
+
+            const hasTime = Number.isFinite(event.at);
+            const interactive = hasSamples && hasTime;
+            const card = node(interactive ? 'button' : 'div', '', 'cl-event-card');
+            card.appendChild(node('strong', label));
+            const time = hasTime ? timeLabel(event.at) : unknown;
+            const stamp = node('time', time);
+            if (hasTime) stamp.setAttribute('datetime', time);
+            card.appendChild(stamp);
+            const detail = [event.channel, event.queue && 'Очередь ' + event.queue,
+                event.target, event.result, event.cause && 'Cause ' + event.cause, event.reason].filter(Boolean).join(' · ');
+            if (detail) card.appendChild(node('span', detail, 'cl-event-detail'));
+            if (interactive) {
+                const ordinal = (perSecond.get(event.at) || 0) + 1;
+                perSecond.set(event.at, ordinal);
+                const key = event.at + ':' + ordinal;
+                card.type = 'button';
+                card.dataset.eventKey = key;
+                card.setAttribute('aria-controls', 'cl-quality-charts');
+                card.setAttribute('aria-pressed', String(Boolean(selectedEvent && selectedEvent.key === key)));
+                card.appendChild(node('span', 'К графикам ↗', 'cl-event-action'));
+                card.addEventListener('click', () => selectTimelineEvent(event, label, key));
+                if (key === focusedKey) focused = card;
+            }
+            entry.appendChild(card);
+            timeline.appendChild(entry);
+        }
+        timeline.scrollTop = scrollTop;
+        if (focusedKey) (focused || byId('cl-timeline-title')).focus({preventScroll: true});
+        if (!record.timeline.length) timeline.appendChild(node('li', 'События пока недоступны.', 'cl-event-empty'));
+    }
 
     function renderRecord(record) {
         byId('cl-record-summary').textContent = 'Начало: ' + dateTime(record.started_at)
@@ -1020,16 +1115,9 @@
         const option = node('option', 'Худшие измерения всех каналов'); option.value = ''; selector.appendChild(option);
         for (const c of record.channels) { const o = node('option', c.name); o.value = c.id; selector.appendChild(o); }
         selector.value = record.channels.some((c) => c.id === old) ? old : '';
+        byId('cl-record-review').hidden = false;
+        renderTimeline(record);
         renderQualityCharts();
-        const timeline = byId('cl-timeline'); timeline.textContent = '';
-        for (const event of record.timeline) {
-            const entry = node('li');
-            entry.appendChild(node('time', timeLabel(event.at)));
-            entry.appendChild(node('strong', eventNames[event.kind] || event.kind));
-            entry.appendChild(node('span', [event.channel, event.queue && 'Очередь ' + event.queue,
-                event.target, event.result, event.cause && 'Cause ' + event.cause, event.reason].filter(Boolean).join(' · ')));
-            timeline.appendChild(entry);
-        }
         const causes = (record.causes || []).map((c) => c.channel + ': ' + c.code + ' ' + c.text);
         byId('cl-record-notice').textContent = [causes.length ? 'Причины завершения по Asterisk: ' + causes.join('; ') : '',
             record.status !== 'active' && !causes.length ? 'Причина завершения не получена от Asterisk.' : '',
@@ -1060,14 +1148,26 @@
         box.appendChild(node('figcaption', title));
         const known = values.filter((p) => Number.isFinite(p.value));
         if (!known.length) { box.appendChild(node('p', 'Замеры недоступны', 'cl-detail-note')); return box; }
-        const svg = svgNode('svg', {viewBox: '0 0 440 160', role: 'img', 'aria-label': title});
-        const minT = values[0].at; const maxT = values[values.length - 1].at;
+        const eventLabel = selectedEvent ? selectedEvent.label + ' · ' + timeLabel(selectedEvent.at) : '';
+        const svg = svgNode('svg', {viewBox: '0 0 440 160', role: 'img', 'aria-label': [title, eventLabel].filter(Boolean).join(' · ')});
+        const first = values[0].at;
+        const last = values[values.length - 1].at;
+        const minT = selectedEvent ? Math.min(first, selectedEvent.at) : first;
+        const maxT = selectedEvent ? Math.max(last, selectedEvent.at) : last;
         const maximum = fixedMax || Math.max(1, ...known.map((p) => p.value)) * 1.1;
-        const x = (t) => 42 + (t - minT) / Math.max(1, maxT - minT) * 380;
+        const left = 56;
+        const right = 422;
+        const x = (t) => left + (t - minT) / Math.max(1, maxT - minT) * (right - left);
         const y = (v) => 130 - Math.min(maximum, v) / maximum * 105;
         for (const v of [0, maximum / 2, maximum]) {
-            svg.appendChild(svgNode('line', {x1: 42, x2: 422, y1: y(v), y2: y(v), stroke: '#d9e3e9'}));
-            svg.appendChild(svgNode('text', {x: 37, y: y(v) + 4, 'text-anchor': 'end'}, detailNumber.format(v)));
+            svg.appendChild(svgNode('line', {x1: left, x2: right, y1: y(v), y2: y(v), stroke: '#d9e3e9'}));
+            svg.appendChild(svgNode('text', {x: left - 5, y: y(v) + 4, 'text-anchor': 'end'}, detailNumber.format(v)));
+        }
+        if (selectedEvent) {
+            const at = x(selectedEvent.at);
+            const marker = svgNode('line', {x1: at, x2: at, y1: 22, y2: 132, class: 'cl-chart-event-marker', 'data-event-at': selectedEvent.at});
+            marker.appendChild(svgNode('title', {}, eventLabel));
+            svg.appendChild(marker);
         }
         let path = ''; let previous = null;
         for (const p of values) {
@@ -1082,8 +1182,8 @@
             dot.appendChild(svgNode('title', {}, dateTime(p.at) + ': ' + measure(p.value, unit)));
             svg.appendChild(dot);
         }
-        svg.appendChild(svgNode('text', {x: 42, y: 151}, timeLabel(minT)));
-        svg.appendChild(svgNode('text', {x: 422, y: 151, 'text-anchor': 'end'}, timeLabel(maxT)));
+        svg.appendChild(svgNode('text', {x: left, y: 151}, timeLabel(minT)));
+        svg.appendChild(svgNode('text', {x: right, y: 151, 'text-anchor': 'end'}, timeLabel(maxT)));
         box.appendChild(svg);
         return box;
     }
@@ -1091,6 +1191,11 @@
     function renderQualityCharts() {
         if (!shownRecord) return;
         const body = byId('cl-quality-charts'); body.textContent = '';
+        const selection = byId('cl-chart-selection');
+        const message = selectedEvent ? 'Отметка · ' + timeLabel(selectedEvent.at) + ' · ' + selectedEvent.label : '';
+        if (selection.textContent !== message) selection.textContent = message;
+        selection.hidden = !selectedEvent;
+        byId('cl-clear-marker').hidden = !selectedEvent;
         const selected = byId('cl-chart-channel').value;
         const metrics = [['score', 'Качество, %', '%', 100], ['loss', 'Потери пакетов, %', '%'],
             ['jitter', 'Джиттер на приёме, мс', ' мс'], ['rtt', 'RTT, мс', ' мс']];
@@ -1265,6 +1370,12 @@
     byId('cl-statistics-form').addEventListener('submit', (event) => { event.preventDefault(); loadStatistics(); });
     byId('cl-diagnostics-refresh').addEventListener('click', loadDiagnostics);
     byId('cl-chart-channel').addEventListener('change', renderQualityCharts);
+    byId('cl-clear-marker').addEventListener('click', () => {
+        selectedEvent = null;
+        updateTimelineSelection();
+        renderQualityCharts();
+        byId('cl-chart-title').focus({preventScroll: true});
+    });
     byId('cl-stat-day').addEventListener('change', renderHours);
     byId('cl-problem-filter').addEventListener('change', () => { if (snapshot) paint(snapshot); });
     byId('cl-threshold-form').addEventListener('submit', saveThresholds);
