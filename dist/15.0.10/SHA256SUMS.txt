@@ -1,0 +1,4 @@
+e4f75c04e7b6cc3a8014553897b3092955f941dc0ad7f0110f1ba488883a4af1  calllive-15.0.10-sign-local.php
+7ad4744ba6cf7b5d7562c0a9c0b80c92750a77f0c6d9635d4d7abe9b95901700  calllive-15.0.10-sign-root-command.txt
+39b3e1b791b8cf99325a19c9c5a9a9fc5ef72d301519bcf7085fa7d935d59218  calllive-15.0.10-update-root-command.txt
+46c57cbf79e4d5e8894b51655049619ebf38239ca0c521132f609a5f8d4af3af  freepbx15-calllive-15.0.10.tar.gz
